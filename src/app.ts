@@ -20,6 +20,13 @@ const cache = createTtlCache<SupplyResponse>(
 );
 
 const app: Express = express();
+// Deployed behind nginx on the same host (loopback). Without this, Express's
+// req.ip is always nginx's own address, so express-rate-limit buckets every
+// client on earth into one shared counter instead of limiting per real
+// client. "loopback" trusts X-Forwarded-For only from a directly-connected
+// loopback peer — exactly nginx's position — so a remote client can't spoof
+// their way past it by sending their own X-Forwarded-For.
+app.set("trust proxy", "loopback");
 app.use(
   rateLimit({
     windowMs: 60_000,
@@ -50,10 +57,14 @@ app.get(
     try {
       supply = await cache.get();
     } catch (error) {
+      // Full detail goes to the server log only. SOLANA_RPC_URL may carry an
+      // API key (e.g. a paid RPC provider's URL with a query-string token),
+      // and some fetch failure messages embed the request URL — echoing
+      // `error.message` to an unauthenticated public client would risk
+      // leaking it.
       log.error({ error }, "Error retrieving supply data");
       res.status(500).json({
         message: "Error retrieving supply data",
-        error: error instanceof Error ? error.message : String(error),
       });
       return;
     }

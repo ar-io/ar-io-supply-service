@@ -122,10 +122,49 @@ describe("GET /token/supply, /token/supply/:attribute, /health", () => {
   });
 });
 
+describe("rate limiting keys per real client, not per proxy hop", () => {
+  it("treats requests with different X-Forwarded-For values as different clients", async () => {
+    // Regression test for the "trust proxy" bug: without `app.set("trust
+    // proxy", "loopback")`, Express ignores X-Forwarded-For entirely and
+    // req.ip is always the connecting socket's address. Since these test
+    // requests connect over loopback — the same position nginx occupies in
+    // production — this exercises exactly the scenario that broke: every
+    // client collapsing into one shared rate-limit bucket.
+    const okFetch = mock.method(globalThis, "fetch", async () => {
+      return new Response(JSON.stringify(buildAccountsResponse()), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    process.env.RATE_LIMIT_PER_MIN = "1";
+    try {
+      const { default: limitedApp } = await import(`./app.js?rl=${Date.now()}`);
+      const server = limitedApp.listen(0);
+      try {
+        await new Promise<void>((resolve) => server.once("listening", resolve));
+        const { port } = server.address() as AddressInfo;
+        const url = `http://127.0.0.1:${port}/token/supply`;
+
+        const first = await realFetch(url, { headers: { "X-Forwarded-For": "1.1.1.1" } });
+        assert.equal(first.status, 200);
+        const secondSameClient = await realFetch(url, { headers: { "X-Forwarded-For": "1.1.1.1" } });
+        assert.equal(secondSameClient.status, 429, "second request from the same client should be rate-limited");
+        const differentClient = await realFetch(url, { headers: { "X-Forwarded-For": "2.2.2.2" } });
+        assert.equal(differentClient.status, 200, "a different client's first request should not be rate-limited");
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    } finally {
+      delete process.env.RATE_LIMIT_PER_MIN;
+      okFetch.mock.restore();
+    }
+  });
+});
+
 describe("GET /token/supply when the upstream RPC is down and no cache exists", () => {
-  it("returns 500 with an error message", async () => {
+  it("returns 500 with a generic message — no internal error detail (e.g. a keyed RPC URL) leaked to the client", async () => {
     const failingFetch = mock.method(globalThis, "fetch", async () => {
-      throw new Error("connect ECONNREFUSED");
+      throw new Error("connect ECONNREFUSED secret-rpc-api-key=abc123");
     });
     // Fresh app instance with its own cache so this test doesn't depend on
     // (or pollute) the cache populated by the suite above.
@@ -139,6 +178,8 @@ describe("GET /token/supply when the upstream RPC is down and no cache exists", 
       assert.equal(res.status, 500);
       const body = await res.json();
       assert.match(body.message, /Error retrieving supply data/);
+      assert.equal(body.error, undefined);
+      assert.ok(!JSON.stringify(body).includes("secret-rpc-api-key"));
     } finally {
       failingFetch.mock.restore();
       await new Promise<void>((resolve) => server.close(() => resolve()));
