@@ -1,6 +1,7 @@
 # ar.io supply service
 
-Serves the AR.IO network token supply as JSON at `ario.permaweb.services`.
+Serves the AR.IO network token supply as JSON at
+`ario.permaweb.services/token/supply`.
 Reads live supply directly from Solana (three fixed on-chain accounts) on
 every cache miss — no SDK dependency, just native `fetch` JSON-RPC.
 
@@ -10,7 +11,7 @@ nginx on a plain VPS.
 
 ## API
 
-- `GET /` — full supply object, denominated in ARIO:
+- `GET /token/supply` — full supply object, denominated in ARIO:
   ```json
   {
     "total": 1000000000,
@@ -23,8 +24,10 @@ nginx on a plain VPS.
     "liquid": 561204651.46
   }
   ```
-- `GET /:attribute` — a single field as a bare JSON scalar, e.g.
-  `GET /circulating` -> `654623847.25`. 404 if the field doesn't exist.
+- `GET /token/supply/:attribute` — a single field as a bare JSON scalar,
+  e.g. `GET /token/supply/circulating` -> `654623847.25`. 404 if the field
+  doesn't exist. (Path matches the original API Gateway resource exactly —
+  bare `/` 404s, same as it did in production.)
 - `GET /health` — `{ ok, cache: { hasValue, ageMs, lastErrorMessage } }`.
   Does not hit Solana; reports whether the in-process cache has a value and
   how stale it is, so you can tell "service is up" from "service is up but
@@ -84,7 +87,7 @@ TLS via certbot, supervised by systemd — the same pattern already used for
    ```bash
    cd /opt/ar-io-supply-service
    docker compose build
-   docker compose up   # Ctrl-C once you've confirmed curl localhost:3031/ works
+   docker compose up   # Ctrl-C once you've confirmed curl localhost:3031/token/supply works
    ```
 
 2. Point DNS for `ario.permaweb.services` at this host (A + AAAA) before
@@ -120,8 +123,8 @@ TLS via certbot, supervised by systemd — the same pattern already used for
 
 6. Verify:
    ```bash
-   curl https://ario.permaweb.services/
-   curl https://ario.permaweb.services/circulating
+   curl https://ario.permaweb.services/token/supply
+   curl https://ario.permaweb.services/token/supply/circulating
    curl https://ario.permaweb.services/health
    ```
 

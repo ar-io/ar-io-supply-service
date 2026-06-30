@@ -47,7 +47,7 @@ function buildAccountsResponse() {
 // implementation first and use it for client-side requests in these tests.
 const realFetch = globalThis.fetch.bind(globalThis);
 
-describe("GET /, /:attribute, /health", () => {
+describe("GET /token/supply, /token/supply/:attribute, /health", () => {
   let baseUrl: string;
   let server: import("node:http").Server;
   let fetchMock: ReturnType<typeof mock.method>;
@@ -71,8 +71,8 @@ describe("GET /, /:attribute, /health", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  it("GET / returns the full supply object denominated in ARIO", async () => {
-    const res = await realFetch(`${baseUrl}/`);
+  it("GET /token/supply returns the full supply object denominated in ARIO", async () => {
+    const res = await realFetch(`${baseUrl}/token/supply`);
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.total, 1_000_000_000);
@@ -85,23 +85,28 @@ describe("GET /, /:attribute, /health", () => {
     assert.match(res.headers.get("cache-control") ?? "", /max-age=60/);
   });
 
-  it("GET /:attribute returns a bare scalar for a known field", async () => {
-    const res = await realFetch(`${baseUrl}/staked`);
+  it("GET /token/supply/:attribute returns a bare scalar for a known field", async () => {
+    const res = await realFetch(`${baseUrl}/token/supply/staked`);
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body, 10_000_000);
   });
 
-  it("GET /:attribute 404s for an unknown field", async () => {
-    const res = await realFetch(`${baseUrl}/notarealfield`);
+  it("GET /token/supply/:attribute 404s for an unknown field", async () => {
+    const res = await realFetch(`${baseUrl}/token/supply/notarealfield`);
     assert.equal(res.status, 404);
     const body = await res.json();
     assert.match(body.message, /not found/);
   });
 
+  it("GET / (bare root) 404s — only /token/supply is a valid path", async () => {
+    const res = await realFetch(`${baseUrl}/`);
+    assert.equal(res.status, 404);
+  });
+
   it("GET /health reports cache status", async () => {
-    // Hit / once first so the cache has a value.
-    await realFetch(`${baseUrl}/`);
+    // Hit /token/supply once first so the cache has a value.
+    await realFetch(`${baseUrl}/token/supply`);
     const res = await realFetch(`${baseUrl}/health`);
     assert.equal(res.status, 200);
     const body = await res.json();
@@ -110,14 +115,14 @@ describe("GET /, /:attribute, /health", () => {
   });
 
   it("only calls the Solana RPC once across repeated requests within the TTL", async () => {
-    await realFetch(`${baseUrl}/`);
-    await realFetch(`${baseUrl}/circulating`);
-    await realFetch(`${baseUrl}/staked`);
+    await realFetch(`${baseUrl}/token/supply`);
+    await realFetch(`${baseUrl}/token/supply/circulating`);
+    await realFetch(`${baseUrl}/token/supply/staked`);
     assert.equal(fetchMock.mock.callCount(), 1);
   });
 });
 
-describe("GET / when the upstream RPC is down and no cache exists", () => {
+describe("GET /token/supply when the upstream RPC is down and no cache exists", () => {
   it("returns 500 with an error message", async () => {
     const failingFetch = mock.method(globalThis, "fetch", async () => {
       throw new Error("connect ECONNREFUSED");
@@ -130,7 +135,7 @@ describe("GET / when the upstream RPC is down and no cache exists", () => {
       await new Promise<void>((resolve) => server.once("listening", resolve));
       const { port } = server.address() as AddressInfo;
 
-      const res = await realFetch(`http://127.0.0.1:${port}/`);
+      const res = await realFetch(`http://127.0.0.1:${port}/token/supply`);
       assert.equal(res.status, 500);
       const body = await res.json();
       assert.match(body.message, /Error retrieving supply data/);

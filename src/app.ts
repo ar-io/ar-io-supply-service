@@ -40,10 +40,11 @@ app.get("/health", (_req: Request, res: Response) => {
   });
 });
 
-/// GET / — full supply object, denominated in ARIO.
-/// GET /:attribute — a single field (e.g. /circulating), bare value.
+/// GET /token/supply — full supply object, denominated in ARIO.
+/// GET /token/supply/:attribute — a single field (e.g. /circulating), bare
+/// value. Path matches the original API Gateway resource exactly.
 app.get(
-  ["/", "/:attribute"],
+  ["/token/supply", "/token/supply/:attribute"],
   async (req: Request<{ attribute?: string }>, res: Response) => {
     let supply: SupplyResponse;
     try {
