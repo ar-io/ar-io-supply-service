@@ -1,0 +1,142 @@
+import { describe, it, before, after, mock } from "node:test";
+import assert from "node:assert/strict";
+import type { AddressInfo } from "node:net";
+
+// `./app.js` reads config at module-init time; none of it is required, but
+// keep LOG_LEVEL quiet for test output. Same pattern as the attestor's
+// app.test.ts.
+process.env.LOG_LEVEL ??= "silent";
+process.env.CACHE_TTL_SECONDS ??= "60";
+
+const { default: app } = await import("./app.js");
+
+function writeU64LE(buf: Buffer, offset: number, value: bigint): void {
+  for (let i = 0; i < 8; i++) {
+    buf[offset + i] = Number((value >> BigInt(8 * i)) & 0xffn);
+  }
+}
+
+function buildAccountsResponse() {
+  const config = Buffer.alloc(200);
+  writeU64LE(config, 136, 1_000_000_000_000_000n); // total
+  writeU64LE(config, 152, 900_000_000_000_000n); // circulating
+  writeU64LE(config, 160, 50_000_000_000_000n); // locked
+
+  const gar = Buffer.alloc(300);
+  writeU64LE(gar, 253, 10_000_000_000_000n); // staked
+  writeU64LE(gar, 261, 5_000_000_000_000n); // delegated
+  writeU64LE(gar, 269, 1_000_000_000_000n); // withdrawn
+
+  const token = Buffer.alloc(80);
+  writeU64LE(token, 64, 2_000_000_000_000n); // protocolBalance
+
+  return {
+    jsonrpc: "2.0",
+    id: 1,
+    result: {
+      value: [config, gar, token].map((buf) => ({
+        data: [buf.toString("base64"), "base64"],
+      })),
+    },
+  };
+}
+
+// The app's outgoing Solana RPC call and this test file's own HTTP calls
+// to the local test server both resolve to the same global `fetch`.
+// Mocking `globalThis.fetch` therefore intercepts BOTH — capture the real
+// implementation first and use it for client-side requests in these tests.
+const realFetch = globalThis.fetch.bind(globalThis);
+
+describe("GET /, /:attribute, /health", () => {
+  let baseUrl: string;
+  let server: import("node:http").Server;
+  let fetchMock: ReturnType<typeof mock.method>;
+
+  before(async () => {
+    fetchMock = mock.method(globalThis, "fetch", async () => {
+      return new Response(JSON.stringify(buildAccountsResponse()), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    server = app.listen(0);
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const { port } = server.address() as AddressInfo;
+    baseUrl = `http://127.0.0.1:${port}`;
+  });
+
+  after(async () => {
+    fetchMock.mock.restore();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("GET / returns the full supply object denominated in ARIO", async () => {
+    const res = await realFetch(`${baseUrl}/`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.total, 1_000_000_000);
+    assert.equal(body.staked, 10_000_000);
+    assert.equal(body.liquid, 900_000_000);
+    // circulating = total - lockedBeforeCutoff; with no pre-cutoff buckets
+    // unlocked in the future relative to "now" in this fixture-free test,
+    // it's simply <= total.
+    assert.ok(body.circulating <= body.total);
+    assert.match(res.headers.get("cache-control") ?? "", /max-age=60/);
+  });
+
+  it("GET /:attribute returns a bare scalar for a known field", async () => {
+    const res = await realFetch(`${baseUrl}/staked`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body, 10_000_000);
+  });
+
+  it("GET /:attribute 404s for an unknown field", async () => {
+    const res = await realFetch(`${baseUrl}/notarealfield`);
+    assert.equal(res.status, 404);
+    const body = await res.json();
+    assert.match(body.message, /not found/);
+  });
+
+  it("GET /health reports cache status", async () => {
+    // Hit / once first so the cache has a value.
+    await realFetch(`${baseUrl}/`);
+    const res = await realFetch(`${baseUrl}/health`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.cache.hasValue, true);
+  });
+
+  it("only calls the Solana RPC once across repeated requests within the TTL", async () => {
+    await realFetch(`${baseUrl}/`);
+    await realFetch(`${baseUrl}/circulating`);
+    await realFetch(`${baseUrl}/staked`);
+    assert.equal(fetchMock.mock.callCount(), 1);
+  });
+});
+
+describe("GET / when the upstream RPC is down and no cache exists", () => {
+  it("returns 500 with an error message", async () => {
+    const failingFetch = mock.method(globalThis, "fetch", async () => {
+      throw new Error("connect ECONNREFUSED");
+    });
+    // Fresh app instance with its own cache so this test doesn't depend on
+    // (or pollute) the cache populated by the suite above.
+    const { default: freshApp } = await import(`./app.js?t=${Date.now()}`);
+    const server = freshApp.listen(0);
+    try {
+      await new Promise<void>((resolve) => server.once("listening", resolve));
+      const { port } = server.address() as AddressInfo;
+
+      const res = await realFetch(`http://127.0.0.1:${port}/`);
+      assert.equal(res.status, 500);
+      const body = await res.json();
+      assert.match(body.message, /Error retrieving supply data/);
+    } finally {
+      failingFetch.mock.restore();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});

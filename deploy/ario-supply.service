@@ -1,0 +1,22 @@
+# Deploy: copy to /etc/systemd/system/ario-supply.service, then:
+#   systemctl daemon-reload
+#   systemctl enable --now ario-supply.service
+
+[Unit]
+Description=AR.IO token supply service
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ar-io-supply-service
+# Optional: create /opt/ar-io-supply-service/.env (see .env.example) to
+# override defaults, e.g. SOLANA_RPC_URL. Nothing is required to boot.
+EnvironmentFile=-/opt/ar-io-supply-service/.env
+ExecStart=/usr/bin/docker compose up
+ExecStop=/usr/bin/docker compose down
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

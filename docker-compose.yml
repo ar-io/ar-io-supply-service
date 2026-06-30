@@ -1,0 +1,27 @@
+# Production deploy on this host: nginx (TLS termination + reverse proxy)
+# -> this container on 127.0.0.1:3031. See README.md for the full deploy
+# steps (nginx site, systemd unit, certbot).
+#
+# Local development:
+#   docker compose up --build
+
+services:
+  supply:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ar-io-supply-service:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3031:3031"
+    environment:
+      - PORT=3031
+      - SOLANA_RPC_URL=${SOLANA_RPC_URL:-https://api.mainnet-beta.solana.com}
+      - CACHE_TTL_SECONDS=${CACHE_TTL_SECONDS:-60}
+      - RATE_LIMIT_PER_MIN=${RATE_LIMIT_PER_MIN:-300}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3031/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
