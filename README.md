@@ -2,7 +2,7 @@
 
 Serves the AR.IO network token supply as JSON at
 `ario.permaweb.services/token/supply`.
-Reads live supply directly from Solana (three fixed on-chain accounts) on
+Reads live supply directly from Solana (four fixed on-chain accounts) on
 every cache miss — no SDK dependency, just native `fetch` JSON-RPC.
 
 This replaces a previous AWS Lambda + API Gateway + CloudFront deployment
@@ -14,16 +14,19 @@ nginx on a plain VPS.
 - `GET /token/supply` — full supply object, denominated in ARIO:
   ```json
   {
-    "total": 1000000000,
-    "circulating": 654623847.25,
-    "locked": 356623224.87,
-    "staked": 12556416.01,
-    "delegated": 14347927.83,
-    "withdrawn": 2382665.3,
-    "protocolBalance": 53797079.83,
-    "liquid": 561204651.46
+    "total": 999999626.702682,
+    "circulating": 674488929.358951,
+    "locked": 350741549.431956,
+    "staked": 9078395.04032,
+    "delegated": 14179387.872094,
+    "withdrawn": 6582063.966524,
+    "protocolBalance": 117314107.725836,
+    "liquid": 567086326.895261
   }
   ```
+  `total` is the ARIO SPL mint's live supply. It is *below* the 1,000,000,000
+  genesis mint because ARIO is a standard SPL token and holders can burn their
+  own tokens — see "How this differs from the original Lambda" below.
 - `GET /token/supply/:attribute` — a single field as a bare JSON scalar,
   e.g. `GET /token/supply/circulating` -> `654623847.25`. 404 if the field
   doesn't exist. (Path matches the original API Gateway resource exactly —
@@ -37,8 +40,8 @@ nginx on a plain VPS.
 
 The Lambda (`supply.mjs`) is preserved logic-for-logic in `src/supply.ts`
 (account addresses, byte offsets, plausibility checks, and the pre-cutoff
-vault lock-bucket snapshot are unchanged). Two things changed because the
-deployment shape changed:
+vault lock-bucket snapshot are unchanged), with one deliberate correction to
+`total` (3). Two further things changed because the deployment shape changed:
 
 1. **In-process caching (`src/cache.ts`).** The Lambda set
    `Cache-Control: max-age=60` and relied on CloudFront to actually cache
@@ -57,8 +60,24 @@ deployment shape changed:
    RPC errors to callers. Only the very first request after a cold start,
    with no cached value yet, can still 500.
 
-Everything else — account addresses, offsets, the plausibility bounds, the
-`circulating`/`liquid` distinction, the lock-bucket math — is a direct port.
+3. **`total` comes from the ARIO SPL mint, not `ArioConfig`.** The Lambda read
+   `ArioConfig.total_supply` — a genesis *declaration* written once by
+   `finalize_supply` and never updated. ARIO is a standard SPL token, so any
+   holder can burn their own tokens, and two have: 373.297318 ARIO went up in
+   smoke via a wallet-cleanup incinerator (2026-07-05 and 2026-08-10). The
+   declaration cannot track that, so this endpoint was reporting a total the
+   chain no longer held — to price aggregators, among others. We now read the
+   mint's own `supply` field (added as a fourth account in the same
+   `getMultipleAccounts` call, so all four stay same-slot atomic), which tracks
+   burns and mints in real time. `circulating` (`total − lockedBeforeCutoff`)
+   inherits the correction; `liquid`, `locked`, the staking buckets, and
+   `protocolBalance` are unchanged. Note `finalize_migration` permanently
+   disables `finalize_supply`, after which the on-chain declaration can never be
+   corrected — so reading the mint is the only durable fix.
+
+Everything else — account addresses, the other offsets, the plausibility
+bounds, the `circulating`/`liquid` distinction, the lock-bucket math — is a
+direct port.
 
 ## Develop
 
