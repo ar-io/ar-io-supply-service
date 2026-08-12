@@ -264,4 +264,44 @@ describe("getSupply", () => {
     // liquid remains the strict on-chain ArioConfig.circulating_supply.
     assert.equal(supply.liquid, 567_086_326.895261);
   });
+
+  it("reports genesis as the historical 1B, independent of live supply", async (t) => {
+    t.mock.method(globalThis, "fetch", async () => rpcResponse());
+
+    const supply = await getSupply(
+      "http://rpc.test",
+      new AbortController().signal,
+    );
+
+    assert.equal(supply.genesis, 1_000_000_000);
+    // genesis - total surfaces the burned amount (373.297318 ARIO). Compared
+    // with a tolerance because subtracting two ~1e9 float64 values loses the
+    // low digits: the exact difference comes out as 373.29731798171997. Both
+    // served values are themselves exact to the mARIO.
+    assert.ok(
+      Math.abs(supply.genesis - supply.total - 373.297318) < 1e-6,
+      `unexpected burned amount: ${supply.genesis - supply.total}`,
+    );
+  });
+
+  it("exposes exactly the documented response fields", async (t) => {
+    t.mock.method(globalThis, "fetch", async () => rpcResponse());
+
+    const supply = await getSupply(
+      "http://rpc.test",
+      new AbortController().signal,
+    );
+
+    assert.deepEqual(Object.keys(supply), [
+      "total",
+      "genesis",
+      "circulating",
+      "locked",
+      "staked",
+      "delegated",
+      "withdrawn",
+      "protocolBalance",
+      "liquid",
+    ]);
+  });
 });

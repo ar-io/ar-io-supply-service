@@ -41,6 +41,19 @@
 //!   disables `finalize_supply`, after which the declaration can NEVER be
 //!   corrected — one more reason not to depend on it.
 //!
+//! GENESIS — the historical 1B, reported alongside the live total:
+//!   `genesis` is what was actually minted at genesis, so consumers can show
+//!   "1B minted, X in existence today" and see the burn as the difference. It
+//!   is a fixed historical fact (see GENESIS_TOTAL_MARIO below), deliberately
+//!   NOT a read of `ArioConfig.total_supply`: that field is mutable while
+//!   migration is active and may be re-seeded to live supply, which would
+//!   silently make "genesis" stop meaning genesis.
+//!
+//!   It is NOT a max supply, and must not be published as one: the mint
+//!   authority is still live, so supply can currently be increased. Once that
+//!   authority is revoked to None, the effective ceiling becomes the live
+//!   supply at that moment (which burns can only lower) — not this 1B.
+//!
 //! CIRCULATING — historical metric preserved across the migration:
 //!   Migration RESET every Solana vault's startTimestamp, destroying the
 //!   on-chain Dec-8-2025 cutoff signal. But the pre-cutoff vaults are
@@ -59,6 +72,14 @@ export const ARIO_MINT = "DcNnMuFxwhgV4WY1HVSaSEgr92bv2b1vUvEKiNxWqHdF";
 export const ARIO_CONFIG_PDA = "EdtCcYk9RAHyakTSBwtJit6SJcrrk9hj82sASekszLf5";
 export const GAR_SETTINGS_PDA = "7wphJhrg5rpoWNjRqKfyeMPV24e6qrJwfjGKwQasAf54";
 export const PROTOCOL_TOKEN_ACCOUNT = "6Sj3DQAynK916KfBHUZxnG4aDKdqFpBVPCNdD4X6Vrj5";
+
+/**
+ * ARIO minted at genesis, in mARIO: exactly 1,000,000,000 ARIO, created by
+ * three `mintTo` instructions on 2026-06-05T16:47Z
+ * (521,351,171.022 + 26,117,048.325 + 452,531,780.653 ARIO). A settled
+ * historical fact, not live state — see the GENESIS note above.
+ */
+export const GENESIS_TOTAL_MARIO = 1_000_000_000 * MARIO_PER_ARIO;
 
 export interface LockBucket {
   endTimestamp: number;
@@ -227,6 +248,8 @@ export interface DecodedSupply {
 /** Final response shape, denominated in ARIO (not mARIO). */
 export interface SupplyResponse {
   total: number;
+  /** ARIO minted at genesis. Historical constant; NOT a max supply. */
+  genesis: number;
   circulating: number;
   locked: number;
   staked: number;
@@ -406,10 +429,21 @@ export async function getSupply(rpcUrl: string, signal: AbortSignal): Promise<Su
   const now = Date.now();
   const locked = lockedBeforeCutoff(now);
 
+  // Listed field by field (rather than spreading `supplyData`) so the public
+  // response contract is explicit at one site: a new decoded field can't leak
+  // into the API by accident, and the key order is stable for anyone eyeballing
+  // the JSON.
   const mario = {
-    ...supplyData,
+    total: supplyData.total,
+    // What was minted at genesis, for "1B minted, X today" comparisons.
+    genesis: GENESIS_TOTAL_MARIO,
     // Circulating excludes only the pre-cutoff vesting vaults still locked.
     circulating: supplyData.total - locked,
+    locked: supplyData.locked,
+    staked: supplyData.staked,
+    delegated: supplyData.delegated,
+    withdrawn: supplyData.withdrawn,
+    protocolBalance: supplyData.protocolBalance,
     // Liquid is the strict on-chain circulating (freely transferable) balance.
     liquid: supplyData.circulating,
   };

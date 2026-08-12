@@ -15,6 +15,7 @@ nginx on a plain VPS.
   ```json
   {
     "total": 999999626.702682,
+    "genesis": 1000000000,
     "circulating": 674488929.358951,
     "locked": 350741549.431956,
     "staked": 9078395.04032,
@@ -27,6 +28,14 @@ nginx on a plain VPS.
   `total` is the ARIO SPL mint's live supply. It is *below* the 1,000,000,000
   genesis mint because ARIO is a standard SPL token and holders can burn their
   own tokens — see "How this differs from the original Lambda" below.
+
+  `genesis` is the 1,000,000,000 ARIO minted at genesis (2026-06-05), served so
+  consumers can show "1B minted, X in existence today" and read the burned
+  amount as `genesis - total`. It is a fixed historical constant.
+  **It is not a max supply** and should not be published as one: the mint
+  authority is still live, so supply can currently be increased; once that
+  authority is revoked, the effective ceiling becomes the live supply at that
+  moment, which burns can only lower — not this 1B.
 - `GET /token/supply/:attribute` — a single field as a bare JSON scalar,
   e.g. `GET /token/supply/circulating` -> `654623847.25`. 404 if the field
   doesn't exist. (Path matches the original API Gateway resource exactly —

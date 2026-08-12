@@ -80,6 +80,8 @@ describe("GET /token/supply, /token/supply/:attribute, /health", () => {
     const body = await res.json();
     // total comes from the mint's live supply, not the 1B ArioConfig declaration
     assert.equal(body.total, 999_999_626.702682);
+    // genesis is served alongside it as the historical 1B
+    assert.equal(body.genesis, 1_000_000_000);
     assert.equal(body.staked, 10_000_000);
     assert.equal(body.liquid, 900_000_000);
     // circulating = total - lockedBeforeCutoff; with no pre-cutoff buckets
