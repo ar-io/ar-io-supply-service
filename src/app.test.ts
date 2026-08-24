@@ -17,8 +17,11 @@ function writeU64LE(buf: Buffer, offset: number, value: bigint): void {
 }
 
 function buildAccountsResponse() {
+  const mint = Buffer.alloc(82);
+  writeU64LE(mint, 36, 999_999_626_702_682n); // live supply (total)
+
   const config = Buffer.alloc(200);
-  writeU64LE(config, 136, 1_000_000_000_000_000n); // total
+  writeU64LE(config, 136, 1_000_000_000_000_000n); // frozen declaration (unused)
   writeU64LE(config, 152, 900_000_000_000_000n); // circulating
   writeU64LE(config, 160, 50_000_000_000_000n); // locked
 
@@ -34,7 +37,7 @@ function buildAccountsResponse() {
     jsonrpc: "2.0",
     id: 1,
     result: {
-      value: [config, gar, token].map((buf) => ({
+      value: [mint, config, gar, token].map((buf) => ({
         data: [buf.toString("base64"), "base64"],
       })),
     },
@@ -75,7 +78,10 @@ describe("GET /token/supply, /token/supply/:attribute, /health", () => {
     const res = await realFetch(`${baseUrl}/token/supply`);
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.total, 1_000_000_000);
+    // total comes from the mint's live supply, not the 1B ArioConfig declaration
+    assert.equal(body.total, 999_999_626.702682);
+    // genesis is served alongside it as the historical 1B
+    assert.equal(body.genesis, 1_000_000_000);
     assert.equal(body.staked, 10_000_000);
     assert.equal(body.liquid, 900_000_000);
     // circulating = total - lockedBeforeCutoff; with no pre-cutoff buckets
